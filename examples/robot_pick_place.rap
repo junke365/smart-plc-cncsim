@@ -1,0 +1,52 @@
+! ============================================
+! 基本搬运程序 - Pick and Place 示例
+! ============================================
+MODULE main()
+  ! 变量声明
+  PERS robtarget pPick10 := [[100, 0, 200], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget pPlace20 := [[300, 200, 200], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget pSafe10 := [[0, 0, 400], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS speeddata vNormal := [200, 50, 5000, 5000];
+  PERS speeddata vSlow := [50, 20, 5000, 5000];
+  PERS tooldata myTool := [TRUE, [[0, 0, 100], [1, 0, 0, 0]], [0, [0, 0, 0], [1, 0, 0, 0], 0, 0, 0]];
+
+  ! 主程序
+  TPWRITE "开始搬运程序";
+  TPERASE;
+  TPWRITE "移动到安全位置";
+
+  ! 移动到安全位置
+  MoveJ pSafe10, v1000, fine, tool0;
+
+  ! 移动到抓取位置上方
+  MoveL Offs(pPick10, 0, 0, 50), vNormal, z10, myTool;
+
+  ! 接近抓取位置
+  MoveL pPick10, vSlow, fine, myTool;
+
+  ! 模拟抓取 (等待)
+  TPWRITE "抓取工件";
+  WAIT 1000;
+
+  ! 抬起工件
+  MoveL Offs(pPick10, 0, 0, 50), vNormal, z10, myTool;
+
+  ! 移动到放置位置上方
+  MoveL Offs(pPlace20, 0, 0, 50), vNormal, z10, myTool;
+
+  ! 接近放置位置
+  MoveL pPlace20, vSlow, fine, myTool;
+
+  ! 模拟放置
+  TPWRITE "放置工件";
+  WAIT 500;
+
+  ! 抬起
+  MoveL Offs(pPlace20, 0, 0, 50), vNormal, z10, myTool;
+
+  ! 回到安全位置
+  MoveJ pSafe10, v1000, fine, tool0;
+
+  TPWRITE "搬运完成!";
+ENDPROC
+ENDMODULE

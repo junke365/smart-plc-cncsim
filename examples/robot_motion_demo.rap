@@ -1,0 +1,51 @@
+! ============================================
+! 运动演示程序 - 展示各种运动指令
+! ============================================
+MODULE motion_demo()
+  ! 变量声明
+  PERS robtarget pHome := [[0, 0, 400], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget p10 := [[100, 0, 300], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget p20 := [[200, 100, 300], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget p30 := [[200, 200, 300], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget p40 := [[100, 200, 300], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget pCenter := [[150, 100, 300], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+
+  ! 主程序
+  TPWRITE "运动演示开始";
+
+  ! 1. 关节运动 MoveJ
+  TPWRITE "1. MoveJ 关节运动";
+  MoveJ pHome, v500, fine, tool0;
+  MoveJ p10, v500, fine, tool0;
+
+  ! 2. 直线运动 MoveL
+  TPWRITE "2. MoveL 直线运动";
+  MoveL p20, v200, z10, tool0;
+  MoveL p30, v200, z10, tool0;
+  MoveL p40, v200, z10, tool0;
+  MoveL p10, v200, z10, tool0;
+
+  ! 3. 圆弧运动 MoveC (简化为直线)
+  TPWRITE "3. MoveC 圆弧运动";
+  MoveC p20, p30, v100, z5, tool0;
+
+  ! 4. 不同速度
+  TPWRITE "4. 速度测试";
+  MoveL p10, v50, fine, tool0;
+  MoveL p20, v500, fine, tool0;
+  MoveL p30, v1000, fine, tool0;
+  MoveL p40, v2000, fine, tool0;
+
+  ! 5. 不同区域数据
+  TPWRITE "5. 区域数据测试";
+  MoveL p10, v200, fine, tool0;
+  MoveL p20, v200, z1, tool0;
+  MoveL p30, v200, z10, tool0;
+  MoveL p40, v200, z50, tool0;
+
+  ! 回到原点
+  MoveJ pHome, v1000, fine, tool0;
+
+  TPWRITE "运动演示完成!";
+ENDPROC
+ENDMODULE

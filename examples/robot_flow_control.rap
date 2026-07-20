@@ -1,0 +1,89 @@
+! ============================================
+! 流程控制示例 - IF/FOR/WHILE/TEST
+! ============================================
+MODULE flow_control()
+  ! 变量声明
+  VAR num counter := 0;
+  VAR num mode := 2;
+  VAR num i := 0;
+  PERS robtarget pHome := [[0, 0, 400], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget pWork10 := [[100, 0, 200], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget pWork20 := [[200, 0, 200], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+  PERS robtarget pWork30 := [[300, 0, 200], [1, 0, 0, 0], [0, 0, 0, 0], [9E9, 9E9, 9E9, 9E9, 9E9, 9E9]];
+
+  ! 主程序
+  TPWRITE "流程控制示例";
+
+  ! 移动到安全位置
+  MoveJ pHome, v500, fine, tool0;
+
+  ! ===== IF/ELSEIF/ELSE =====
+  TPWRITE "测试IF/ELSEIF/ELSE";
+
+  IF (mode = 1) THEN
+    TPWRITE "模式1: 精细加工";
+    MoveL pWork10, v50, fine, tool0;
+  ELSEIF (mode = 2) THEN
+    TPWRITE "模式2: 正常加工";
+    MoveL pWork20, v200, z10, tool0;
+  ELSE
+    TPWRITE "模式3: 快速加工";
+    MoveL pWork30, v500, z20, tool0;
+  ENDIF
+
+  ! ===== FOR循环 =====
+  TPWRITE "测试FOR循环";
+  FOR i FROM 1 TO 3 STEP 1
+    counter := counter + 1;
+    TPWRITE "循环次数: %d" \Num:=i;
+
+    IF (i = 1) THEN
+      MoveL pWork10, v200, fine, tool0;
+    ELSEIF (i = 2) THEN
+      MoveL pWork20, v200, fine, tool0;
+    ELSE
+      MoveL pWork30, v200, fine, tool0;
+    ENDIF
+  ENDFOR
+
+  ! ===== WHILE循环 =====
+  TPWRITE "测试WHILE循环";
+  counter := 0;
+  WHILE (counter < 3)
+    counter := counter + 1;
+    TPWRITE "WHILE计数: %d" \Num:=counter;
+    MoveL pWork10, v100, fine, tool0;
+    MoveL pWork20, v100, fine, tool0;
+  ENDWHILE
+
+  ! ===== TEST/CASE =====
+  TPWRITE "测试TEST/CASE";
+  TEST (mode)
+    CASE 1:
+      TPWRITE "执行精细加工路径";
+      MoveL pWork10, v50, fine, tool0;
+    CASE 2:
+      TPWRITE "执行正常加工路径";
+      MoveL pWork20, v200, z10, tool0;
+    DEFAULT:
+      TPWRITE "执行默认路径";
+      MoveL pWork30, v500, z20, tool0;
+  ENDTEST
+
+  ! 回到安全位置
+  MoveJ pHome, v500, fine, tool0;
+
+  ! ===== GOTO示例 =====
+  TPWRITE "GOTO跳转测试";
+  GOTO skip_section;
+  MoveL pWork30, v100, fine, tool0;
+
+skip_section:
+  TPWRITE "跳过了中间运动指令";
+
+  ! ===== EXIT示例 =====
+  TPWRITE "所有流程控制测试完成!";
+  MoveJ pHome, v1000, fine, tool0;
+
+ENDPROC
+ENDMODULE
