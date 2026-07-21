@@ -208,6 +208,9 @@ class MotionController:
     self._onMessage: Optional[Callable] = None
     self._onProbe: Optional[Callable] = None
 
+    # JOG时间追踪
+    self._lastJogTime: float = 0.0
+
     # 初始化状态
     self._initJoints()
 
@@ -895,7 +898,7 @@ class MotionController:
     """手动JOG进给
 
     参数:
-      axis: 轴名称 ('X', 'Y', 'Z', 'A', 'B', 'C')
+      axis: 轴名称 ('X', 'Y', 'Z', 'A', 'B', 'C' 或 'J1'~'J6')
       velocity: 进给速度 (mm/min)，0 表示增量模式
       increment: 增量距离 (mm)，0 表示连续模式
     """
@@ -905,7 +908,17 @@ class MotionController:
       return
 
     axis = axis.upper()
-    dt = self.config.servo_cycle_time
+
+    # 使用实际时间间隔计算位移，避免因调用频率不同导致速度不准
+    now = time.monotonic()
+    if hasattr(self, '_lastJogTime') and self._lastJogTime > 0:
+      dt = now - self._lastJogTime
+    else:
+      dt = self.config.servo_cycle_time
+    self._lastJogTime = now
+
+    # 限制 dt 范围，防止异常
+    dt = max(0.001, min(0.1, dt))
 
     # 计算位移
     if increment != 0:

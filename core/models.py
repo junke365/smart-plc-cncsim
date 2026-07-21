@@ -1,18 +1,19 @@
 """3D模型加载器 - 移植自 LinuxCNC vismach.py
 
-支持加载 STL (ASCII) 和 OBJ 格式的3D模型文件。
+支持加载 STL (ASCII/二进制) 和 OBJ 格式的3D模型文件。
 提供 OpenGL 渲染接口，使用显示列表缓存加速渲染。
 """
 import os
+import struct
 from typing import List, Tuple, Optional, Dict
 from OpenGL.GL import *
 
 
 class StlModel:
-    """ASCII STL 模型加载和渲染
+    """STL 模型加载和渲染 (支持 ASCII 和二进制格式)
 
     移植自 LinuxCNC lib/python/vismach.py 的 AsciiSTL 类。
-    解析 STL 文件中的三角面片数据，使用 OpenGL 显示列表缓存。
+    自动检测文件格式（通过检查首行或文件头），解析三角面片数据。
     """
 
     def __init__(self, filename: str = None, data: str = None):
@@ -21,13 +22,35 @@ class StlModel:
 
         if data is not None:
             lines = data.split("\n")
+            self._parseAsciiStl(lines)
         elif filename is not None:
+            # 先用文本读取首行判断格式
             with open(filename, 'r', encoding='utf-8', errors='replace') as f:
-                lines = f.readlines()
-        else:
-            return
+                first_line = f.readline().strip()
+            if first_line.startswith('solid'):
+                self._parseAsciiFile(filename)
+            else:
+                self._parseBinaryStl(filename)
 
+    def _parseAsciiFile(self, filepath: str):
+        """从文件读取并解析 ASCII STL"""
+        with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
         self._parseAsciiStl(lines)
+
+    def _parseBinaryStl(self, filepath: str):
+        """解析二进制 STL 文件"""
+        with open(filepath, 'rb') as f:
+            f.read(80)  # 跳过80字节文件头
+            num_tri = struct.unpack('<I', f.read(4))[0]
+            for _ in range(num_tri):
+                nx, ny, nz = struct.unpack('<3f', f.read(12))
+                v1 = list(struct.unpack('<3f', f.read(12)))
+                v2 = list(struct.unpack('<3f', f.read(12)))
+                v3 = list(struct.unpack('<3f', f.read(12)))
+                f.read(2)  # 跳过属性字节计数
+                self._triangles.append(([nx, ny, nz], [v1, v2, v3]))
+        print(f"[模型] 二进制STL加载: {os.path.basename(filepath)} ({len(self._triangles)} 三角面)")
 
     def _parseAsciiStl(self, lines):
         """解析 ASCII STL 数据"""
@@ -80,6 +103,12 @@ class StlModel:
             # 释放原始数据节省内存
             self._triangles = []
         glCallList(self._displayList)
+
+    def destroy(self):
+        """释放OpenGL显示列表资源"""
+        if self._displayList is not None:
+            glDeleteLists(self._displayList, 1)
+            self._displayList = None
 
     @property
     def triangleCount(self) -> int:
@@ -161,6 +190,12 @@ class ObjModel:
             self._normals = []
             self._faces = []
         glCallList(self._displayList)
+
+    def destroy(self):
+        """释放OpenGL显示列表资源"""
+        if self._displayList is not None:
+            glDeleteLists(self._displayList, 1)
+            self._displayList = None
 
 
 class ModelManager:

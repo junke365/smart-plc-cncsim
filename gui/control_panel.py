@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QPushButton, QLabel, QDoubleSpinBox, QComboBox, QSlider,
     QButtonGroup, QRadioButton, QSizePolicy, QFrame, QScrollArea
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont
 
 
@@ -43,6 +43,14 @@ class ControlPanel(QWidget):
         self.setFixedWidth(280)
         self._jogButtons = []
         self._homeButtons = []
+
+        # 持续JOG支持
+        self._jogAxis: str = ""
+        self._jogVelocity: float = 0.0
+        self._jogTimer = QTimer(self)
+        self._jogTimer.setInterval(20)  # 50Hz JOG刷新
+        self._jogTimer.timeout.connect(self._onJogTick)
+
         self._setup_ui()
         self.setAxes(["X", "Y", "Z"])
 
@@ -274,8 +282,8 @@ class ControlPanel(QWidget):
 
             btn_minus = QPushButton(f"{axis_name}-")
             btn_minus.setFixedSize(btn_size, 36)
-            btn_minus.pressed.connect(lambda a=axis_name: self.jog_continuous.emit(a, -self._jog_velocity.value()))
-            btn_minus.released.connect(lambda a=axis_name: self.jog_stop.emit(a))
+            btn_minus.pressed.connect(lambda a=axis_name: self._startJog(a, -self._jog_velocity.value()))
+            btn_minus.released.connect(lambda a=axis_name: self._stopJog())
             self._jogButtonLayout.addWidget(btn_minus, row, 0)
             self._jogButtons.append(btn_minus)
 
@@ -288,9 +296,31 @@ class ControlPanel(QWidget):
 
             btn_plus = QPushButton(f"{axis_name}+")
             btn_plus.setFixedSize(btn_size, 36)
-            btn_plus.pressed.connect(lambda a=axis_name: self.jog_continuous.emit(a, self._jog_velocity.value()))
-            btn_plus.released.connect(lambda a=axis_name: self.jog_stop.emit(a))
+            btn_plus.pressed.connect(lambda a=axis_name: self._startJog(a, self._jog_velocity.value()))
+            btn_plus.released.connect(lambda a=axis_name: self._stopJog())
             self._jogButtonLayout.addWidget(btn_plus, row, 2)
             self._jogButtons.append(btn_plus)
 
         print(f"[面板] JOG轴已更新: {axes}")
+
+    def _startJog(self, axis: str, velocity: float):
+        """开始持续JOG - 按下按钮时调用"""
+        self._jogAxis = axis
+        self._jogVelocity = velocity
+        # 立即执行一次
+        self.jog_continuous.emit(axis, velocity)
+        # 启动定时器持续执行
+        if not self._jogTimer.isActive():
+            self._jogTimer.start()
+
+    def _stopJog(self):
+        """停止JOG - 松开按钮时调用"""
+        self._jogTimer.stop()
+        if self._jogAxis:
+            self.jog_stop.emit(self._jogAxis)
+            self._jogAxis = ""
+
+    def _onJogTick(self):
+        """JOG定时器回调 - 持续移动"""
+        if self._jogAxis and self._jogVelocity != 0:
+            self.jog_continuous.emit(self._jogAxis, self._jogVelocity)

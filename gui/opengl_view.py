@@ -57,6 +57,9 @@ class OpenGLView(QOpenGLWidget):
         self._machineY: float = 0.0
         self._machineZ: float = 0.0
         self._showWorktable: bool = True
+        self._debugPaintOnce: bool = False  # 切换机型后首次paintGL打印一次调试信息
+        self._axisPositions: Dict[str, float] = {}  # 所有轴的位置
+        self._machineName: str = ""  # 当前机型名称
 
     def initializeGL(self):
         """OpenGL初始化"""
@@ -83,18 +86,28 @@ class OpenGLView(QOpenGLWidget):
         glMatrixMode(GL_PROJECTION)
         glLoadIdentity()
         aspect = w / max(h, 1)
-        gluPerspective(45.0, aspect, 0.1, 5000.0)
+        gluPerspective(45.0, aspect, 0.1, 10000.0)
         glMatrixMode(GL_MODELVIEW)
 
     def paintGL(self):
         """绘制场景"""
+        self._paintCount = getattr(self, '_paintCount', 0) + 1
+        if self._paintCount <= 3 or self._debugPaintOnce:
+            print(f"[GL] paintGL#{self._paintCount}: zoom={self._zoom} rotX={self._rotX} rotY={self._rotY} "
+                  f"machine={self._machineName} vmcParts={len(self._vmcParts)} "
+                  f"loaded={len(self._loadedModels)} axes={self._axisPositions}")
+            self._debugPaintOnce = False
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glLoadIdentity()
 
-        # 视图变换
+        # 视图变换 (Z-up坐标系，参照LinuxCNC glRotateScene):
+        #   rotation_vectors = [(1,0,0), (0,0,1)]
+        #   rotX=纬度(俯仰), rotY=经度(水平旋转绕Z轴)
+        #   对顶点的实际变换顺序: RotZ(lon) → RotX(lat) → Translate
         glTranslatef(self._panX, self._panY, self._zoom)
-        glRotatef(self._rotX, 1.0, 0.0, 0.0)
-        glRotatef(self._rotY, 0.0, 0.0, 1.0)
+        glRotatef(self._rotX, 1.0, 0.0, 0.0)  # 纬度/俯仰 绕X轴
+        glRotatef(self._rotY, 0.0, 0.0, 1.0)  # 经度/水平旋转 绕Z轴
 
         # 绘制坐标轴指示器
         self._drawAxisIndicator()
@@ -139,16 +152,17 @@ class OpenGLView(QOpenGLWidget):
         glEnable(GL_LIGHTING)
 
     def _drawWorktable(self):
-        """绘制工件台"""
+        """绘制工件台 (CNC坐标系: Z向上, Z=0为地板)"""
         glEnable(GL_LIGHTING)
         glColor3f(0.4, 0.4, 0.45)
         xMin, xMax = self._machineXRange
         yMin, yMax = self._machineYRange
-        z = -5.0
+        z = -5.0  # 工件台面略低于Z=0
         thickness = 5.0
 
         glPushMatrix()
 
+        # 顶面 (法向量 +Z 即 CNC向上)
         glNormal3f(0, 0, 1)
         glBegin(GL_QUADS)
         glVertex3f(xMin, yMin, z)
@@ -157,6 +171,7 @@ class OpenGLView(QOpenGLWidget):
         glVertex3f(xMin, yMax, z)
         glEnd()
 
+        # 前面 (-Y)
         glColor3f(0.35, 0.35, 0.4)
         glBegin(GL_QUADS)
         glNormal3f(0, -1, 0)
@@ -166,6 +181,7 @@ class OpenGLView(QOpenGLWidget):
         glVertex3f(xMin, yMin, z - thickness)
         glEnd()
 
+        # 后面 (+Y)
         glBegin(GL_QUADS)
         glNormal3f(0, 1, 0)
         glVertex3f(xMin, yMax, z)
@@ -174,6 +190,7 @@ class OpenGLView(QOpenGLWidget):
         glVertex3f(xMin, yMax, z - thickness)
         glEnd()
 
+        # 左面 (-X)
         glBegin(GL_QUADS)
         glNormal3f(-1, 0, 0)
         glVertex3f(xMin, yMin, z)
@@ -182,6 +199,7 @@ class OpenGLView(QOpenGLWidget):
         glVertex3f(xMin, yMin, z - thickness)
         glEnd()
 
+        # 右面 (+X)
         glBegin(GL_QUADS)
         glNormal3f(1, 0, 0)
         glVertex3f(xMax, yMin, z)
@@ -193,33 +211,116 @@ class OpenGLView(QOpenGLWidget):
         glPopMatrix()
 
     def _drawModels(self):
-        """绘制所有已加载的3D模型（支持VMC轴绑定动态更新）"""
-        has_vmc = hasattr(self, '_vmcParts') and self._vmcParts
-        if not self._loadedModels and not has_vmc:
-            return
+        """绘制所有已加载的3D模型
+
+        支持三种模式:
+        1. 过程化模型: 使用 machine_models.py 的 draw_xxx() 函数直接绘制
+        2. STL/OBJ模型: 使用 _vmcParts 轴绑定渲染 (机器人等)
+        3. 普通模型: 使用 _loadedModels 渲染
+        """
         glEnable(GL_LIGHTING)
         glEnable(GL_COLOR_MATERIAL)
 
-        # 优先使用 VMC 轴绑定部件（有动态位移）
+        # 优先使用过程化模型构建器 (5轴/SCARA/Delta等)
+        if self._machineName:
+            try:
+                from ..core.machine_models import getModelBuilder
+                builder = getModelBuilder(self._machineName)
+                if builder is not None:
+                    builder(self)
+                    return
+            except Exception as e:
+                print(f"[GL] 过程化模型构建器异常: {e}")
+
+        has_vmc = hasattr(self, '_vmcParts') and self._vmcParts
+        if not self._loadedModels and not has_vmc:
+            return
+
         if has_vmc:
-            axis_pos = [getattr(self, '_machineX', 0.0),
-                        getattr(self, '_machineY', 0.0),
-                        getattr(self, '_machineZ', 0.0)]
-            for model, base_off, rot, axis_bind in self._vmcParts:
+            # 构建部件树结构
+            name_to_part = {}  # {part_name: (index, part_data)}
+            children_of = {}   # {parent_name: [child_names]}
+            roots = []
+
+            for i, part_data in enumerate(self._vmcParts):
+                name = part_data[5] if len(part_data) > 5 else f"part_{i}"
+                parent = part_data[4] if len(part_data) > 4 else None
+                name_to_part[name] = (i, part_data)
+                if parent and parent in name_to_part:
+                    children_of.setdefault(parent, []).append(name)
+                elif parent is None:
+                    roots.append(name)
+                else:
+                    roots.append(name)
+
+            # 遍历未被引用为子节点的部件作为根
+            all_names = set(name_to_part.keys())
+            child_names = set()
+            for children in children_of.values():
+                child_names.update(children)
+            roots = list(all_names - child_names)
+
+            # 递归渲染树
+            rendered = set()
+
+            def renderPart(partName):
+                if partName in rendered:
+                    return
+                rendered.add(partName)
+                if partName not in name_to_part:
+                    return
+
+                idx, part_data = name_to_part[partName]
+                model = part_data[0]
+                base_off = part_data[1]
+                static_rot = part_data[2] if len(part_data) > 2 else [0, 0, 0]
+                axis_bind = part_data[3] if len(part_data) > 3 else None
+                parent_name = part_data[4] if len(part_data) > 4 else None
+                rot_axis = part_data[6] if len(part_data) > 6 else None
+
+                # 先渲染父部件
+                if parent_name:
+                    renderPart(parent_name)
+
                 glPushMatrix()
-                off_x = base_off[0]
-                off_y = base_off[1]
-                off_z = base_off[2]
-                if isinstance(axis_bind, int) and 0 <= axis_bind <= 2:
-                    off_x += axis_pos[0] if axis_bind == 0 else 0
-                    off_y += axis_pos[1] if axis_bind == 1 else 0
-                    off_z += axis_pos[2] if axis_bind == 2 else 0
-                glTranslatef(off_x, off_y, off_z)
-                glRotatef(rot[0], 1, 0, 0)
-                glRotatef(rot[1], 0, 1, 0)
-                glRotatef(rot[2], 0, 0, 1)
+
+                # 应用基础偏移
+                glTranslatef(base_off[0], base_off[1], base_off[2])
+
+                # 应用关节旋转或平移
+                if axis_bind and axis_bind in self._axisPositions:
+                    angle = self._axisPositions[axis_bind]
+                    if rot_axis:
+                        # 旋转关节 (机器人)
+                        if rot_axis == "X":
+                            glRotatef(angle, 1, 0, 0)
+                        elif rot_axis == "Y":
+                            glRotatef(angle, 0, 1, 0)
+                        elif rot_axis == "Z":
+                            glRotatef(angle, 0, 0, 1)
+                    else:
+                        # 平移关节 (机床)
+                        if axis_bind in ('X',):
+                            glTranslatef(angle, 0, 0)
+                        elif axis_bind in ('Y',):
+                            glTranslatef(0, angle, 0)
+                        elif axis_bind in ('Z',):
+                            glTranslatef(0, 0, angle)
+
+                # 应用静态旋转
+                glRotatef(static_rot[0], 1, 0, 0)
+                glRotatef(static_rot[1], 0, 1, 0)
+                glRotatef(static_rot[2], 0, 0, 1)
+
                 model.draw()
                 glPopMatrix()
+
+            for name in roots:
+                renderPart(name)
+            # 渲染可能遗漏的部件
+            for name in all_names:
+                if name not in rendered:
+                    renderPart(name)
 
         # 普通模型（无轴绑定）
         for model, pos, rot in self._loadedModels:
@@ -482,6 +583,18 @@ class OpenGLView(QOpenGLWidget):
         self._machineZ = z
         self.update()
 
+    def updateMachinePositionDict(self, pos_dict: dict):
+        """更新所有轴位置（支持任意轴名）
+
+        从位置字典中提取X/Y/Z到 _machineX/Y/Z，
+        所有轴位置存入 _axisPositions 供轴绑定渲染使用
+        """
+        self._machineX = pos_dict.get('X', 0.0)
+        self._machineY = pos_dict.get('Y', 0.0)
+        self._machineZ = pos_dict.get('Z', 0.0)
+        self._axisPositions = dict(pos_dict)
+        self.update()
+
     def setMachineView(self, grid_range, zoom, rotX, rotY, show_worktable=True):
         """切换机型时更新视图参数
 
@@ -501,8 +614,11 @@ class OpenGLView(QOpenGLWidget):
         self._panX = 0.0
         self._panY = 0.0
         self._showWorktable = show_worktable
+        print(f"[GL] setMachineView: zoom={self._zoom} rotX={self._rotX} rotY={self._rotY} "
+              f"gridX={self._machineXRange} gridY={self._machineYRange} "
+              f"gridSize={self._gridSize} wt={self._showWorktable}")
+        self._debugPaintOnce = True
         self.update()
-        print(f"[GL] 视图已更新: grid=[{lo},{hi}] zoom={zoom} worktable={show_worktable}")
 
     # ==================== 3D模型接口 ====================
 
@@ -553,7 +669,17 @@ class OpenGLView(QOpenGLWidget):
         return self.loadModel(filepath, pos, rot)
 
     def clearModels(self):
-        """清空所有模型"""
+        """清空所有模型（释放OpenGL显示列表）"""
+        # 释放 VMC 部件的显示列表
+        for part_data in self._vmcParts:
+            model = part_data[0]
+            if hasattr(model, 'destroy'):
+                model.destroy()
+        # 释放普通模型的显示列表
+        for part_data in self._loadedModels:
+            model = part_data[0]
+            if hasattr(model, 'destroy'):
+                model.destroy()
         self._loadedModels.clear()
         self._vmcParts.clear()
         self.update()
@@ -596,7 +722,7 @@ class OpenGLView(QOpenGLWidget):
             self._panY -= dy * 0.5
         elif self._mouseButton == Qt.RightButton:
             self._zoom += dy * 0.5
-            self._zoom = min(-10, max(-2000, self._zoom))
+            self._zoom = min(-10, max(-5000, self._zoom))
 
         self.update()
 
@@ -604,7 +730,7 @@ class OpenGLView(QOpenGLWidget):
         """鼠标滚轮事件 - 缩放"""
         delta = event.angleDelta().y()
         self._zoom += delta * 0.1
-        self._zoom = min(-10, max(-2000, self._zoom))
+        self._zoom = min(-10, max(-5000, self._zoom))
         self.update()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):

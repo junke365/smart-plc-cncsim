@@ -129,9 +129,27 @@ class MainWindow(QMainWindow):
         view_layout.setContentsMargins(0, 0, 0, 0)
         view_layout.setSpacing(2)
 
+        view_header = QHBoxLayout()
+        view_header.setContentsMargins(0, 0, 0, 0)
+        view_header.setSpacing(4)
+
         view_label = QLabel("3D仿真视图")
         view_label.setStyleSheet("QLabel { color: #888; padding: 2px; }")
-        view_layout.addWidget(view_label)
+        view_header.addWidget(view_label)
+
+        self._btn_toggle_grid = QPushButton("网格: 开")
+        self._btn_toggle_grid.setFixedHeight(22)
+        self._btn_toggle_grid.setFixedWidth(60)
+        self._btn_toggle_grid.setStyleSheet(
+            "QPushButton { background-color: #313244; color: #a6e3a1; border: 1px solid #585b70; "
+            "border-radius: 3px; padding: 1px 4px; font-size: 11px; }"
+            "QPushButton:hover { background-color: #45475a; }"
+        )
+        self._btn_toggle_grid.clicked.connect(self._on_toggle_grid)
+        view_header.addWidget(self._btn_toggle_grid)
+
+        view_header.addStretch()
+        view_layout.addLayout(view_header)
 
         self._gl_view = OpenGLView()
         view_layout.addWidget(self._gl_view)
@@ -690,7 +708,7 @@ class MainWindow(QMainWindow):
         self._gl_view.clear_paths()
         zero_dict = {name: 0.0 for name in self._motion.axisNames}
         self._gl_view.update_position(zero_dict)
-        self._gl_view.updateMachinePosition(0, 0, 0)
+        self._gl_view.updateMachinePositionDict(zero_dict)
         print("[UI] 已复位")
         self._statusbar.showMessage("已复位")
         self._status_panel.update_position(zero_dict)
@@ -701,6 +719,22 @@ class MainWindow(QMainWindow):
     def _on_clear_paths(self):
         self._gl_view.clear_paths()
         self._statusbar.showMessage("路径已清除")
+
+    def _on_toggle_grid(self):
+        """切换网格显示/隐藏"""
+        vis = not self._gl_view._showGrid
+        self._gl_view._showGrid = vis
+        self._btn_toggle_grid.setText("网格: 开" if vis else "网格: 关")
+        self._btn_toggle_grid.setStyleSheet(
+            "QPushButton { background-color: #313244; color: #a6e3a1; border: 1px solid #585b70; "
+            "border-radius: 3px; padding: 1px 4px; font-size: 11px; }"
+            "QPushButton:hover { background-color: #45475a; }"
+            if vis else
+            "QPushButton { background-color: #313244; color: #f38ba8; border: 1px solid #585b70; "
+            "border-radius: 3px; padding: 1px 4px; font-size: 11px; }"
+            "QPushButton:hover { background-color: #45475a; }"
+        )
+        self._gl_view.update()
 
     def _generate_visual_paths(self, canon: CanonCommand):
         """从规范命令生成3D可视化路径"""
@@ -864,54 +898,55 @@ class MainWindow(QMainWindow):
         self._statusbar.showMessage("已清除所有模型")
 
     def _on_switch_machine(self, machineName: str):
-        """切换机型 - 加载新模型、更新JOG轴、重建运动控制器"""
+        """切换机型"""
         cfg = getMachineConfig(machineName)
         if cfg is None:
-            print(f"[UI] 未知机型: {machineName}")
             return
 
-        print(f"[UI] 切换机型: {machineName} ({cfg['desc']})")
+        print(f"[UI] 切换机型: {machineName}")
         self._current_machine = machineName
 
         # 1. 清除旧模型和路径
         self._gl_view.clearModels()
         self._gl_view.clear_paths()
 
-        # 2. 加载新机型的3D模型
-        loaded = loadMachineModels(machineName)
-        if loaded:
-            for model, offset, axis_bind in loaded:
-                # axis_bind 是轴名称字符串，转为索引
-                axis_idx = -1
-                if axis_bind is not None and axis_bind in cfg["axes"]:
-                    axis_idx = cfg["axes"].index(axis_bind)
+        # 2. 设置机型名称到GL视图 (用于过程化模型)
+        self._gl_view._machineName = machineName
+
+        # 3. 加载新机型的3D模型 (STL/OBJ模式)
+        if not cfg.get("use_procedural", False):
+            loaded = loadMachineModels(machineName)
+            for item in loaded:
+                model, offset, axis_bind, parent_bind, part_name, rot_axis = item
                 self._gl_view._vmcParts.append(
-                    (model, offset, [0, 0, 0], axis_idx)
+                    (model, offset, [0, 0, 0], axis_bind, parent_bind, part_name, rot_axis)
                 )
-            print(f"[UI] 加载了 {len(loaded)} 个模型部件")
+            print(f"[UI] 加载 {len(loaded)} 个STL/OBJ模型")
         else:
-            self._gl_view._vmcParts = []
-            print("[UI] 此机型无3D模型")
+            print(f"[UI] 使用过程化模型: {machineName}")
 
-        # 3. 更新视图（网格范围、缩放、旋转、工件台、平移重置）
-        self._gl_view.setMachineView(
-            grid_range=cfg.get("grid_range", (-500, 500)),
-            zoom=cfg.get("view_zoom", -300.0),
-            rotX=cfg.get("view_rotX", -25.0),
-            rotY=cfg.get("view_rotY", 225.0),
-            show_worktable=cfg.get("show_worktable", True),
-        )
+        # 4. 设置GL视图参数
+        gr = cfg.get("grid_range", (-500, 500))
+        gl = self._gl_view
+        gl._machineXRange = gr
+        gl._machineYRange = gr
+        gl._gridSize = max(10.0, (gr[1] - gr[0]) / 50.0)
+        gl._zoom = cfg.get("view_zoom", -300.0)
+        gl._rotX = cfg.get("view_rotX", -25.0)
+        gl._rotY = cfg.get("view_rotY", 225.0)
+        gl._panX = 0.0
+        gl._panY = 0.0
+        gl._showWorktable = cfg.get("show_worktable", True)
+        print(f"[UI] GL: zoom={gl._zoom} rotX={gl._rotX} rotY={gl._rotY} "
+              f"grid={gr} wt={gl._showWorktable}")
 
-        # 4. 重建JOG轴按钮
+        # 5. 重建JOG轴按钮
         self._control_panel.setAxes(cfg["axes"])
 
-        # 5. 重建运动控制器
+        # 6. 重建运动控制器
         axes = cfg["axes"]
         self._config = MotionConfig(
             num_joints=len(axes),
-            traj_cycle_time=0.001,
-            max_velocity=5000.0,
-            max_acceleration=50000.0,
             coordinates="".join(axes),
             axis_names=axes,
             kinematics_name=cfg.get("kinematics", "identity"),
@@ -923,41 +958,53 @@ class MainWindow(QMainWindow):
             on_message=self._on_message
         )
 
-        # 6. 重建DRO状态面板
+        # 7. 重建DRO
         self._status_panel.setAxes(axes)
 
-        # 7. 重置位置显示
+        # 8. 重置位置
         zero_dict = {name: 0.0 for name in axes}
-        self._gl_view.update_position(zero_dict)
-        self._gl_view.updateMachinePosition(0, 0, 0)
+        gl._currentX = 0.0
+        gl._currentY = 0.0
+        gl._currentZ = 0.0
+        gl._machineX = 0.0
+        gl._machineY = 0.0
+        gl._machineZ = 0.0
+        gl._axisPositions = {name: 0.0 for name in axes}
         self._status_panel.update_position(zero_dict)
         self._statusbar.showMessage(f"已切换到: {machineName} ({len(axes)}轴)")
 
-        self._gl_view.update()
+        # 9. 延迟强制重绘
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(50, gl.update)
 
     # ==================== JOG ====================
 
     def _on_jog_continuous(self, axis: str, velocity: float):
-        print(f"[UI] JOG 轴={axis} 速度={velocity}")
+        # 自动上电 - 如果未上电则自动解除急停并上电
+        if self._motion.machine_state != MachineState.ON:
+            if self._motion.machine_state == MachineState.ESTOP:
+                self._motion.estop_off()
+            self._motion.power_on()
+            self._status_panel.update_mode("ON")
+            print("[UI] JOG自动上电")
         self._motion.jog(axis, velocity)
 
     def _on_jog_stop(self, axis: str):
         print(f"[UI] JOG停止 轴={axis}")
-        pass
 
     def _on_home_all(self):
         for i in range(self._config.num_joints):
             self._motion.home_joint(i)
         zero_dict = {name: 0.0 for name in self._motion.axisNames}
         self._gl_view.update_position(zero_dict)
+        self._gl_view.updateMachinePositionDict(zero_dict)
         self._statusbar.showMessage("全轴回零完成")
 
     def _on_home_joint(self, joint: int):
         self._motion.home_joint(joint)
         pos_dict = self._motion.getPositionDict()
         self._gl_view.update_position(pos_dict)
-        self._gl_view.updateMachinePosition(
-            pos_dict.get('X', 0.0), pos_dict.get('Y', 0.0), pos_dict.get('Z', 0.0))
+        self._gl_view.updateMachinePositionDict(pos_dict)
         self._status_panel.update_position(pos_dict)
         self._statusbar.showMessage(f"轴{joint}回零完成")
 
@@ -985,8 +1032,8 @@ class MainWindow(QMainWindow):
     def _on_position_update(self, pos_dict: dict):
         """位置更新回调 - 接收 {轴名: 位置} 字典"""
         self._gl_view.update_position(pos_dict)
-        self._gl_view.updateMachinePosition(
-            pos_dict.get('X', 0.0), pos_dict.get('Y', 0.0), pos_dict.get('Z', 0.0))
+        # 传递完整轴位置到GL视图（支持机器人轴）
+        self._gl_view.updateMachinePositionDict(pos_dict)
         self._status_panel.update_position(pos_dict)
 
         if self._activeInterpreter == "robot":
